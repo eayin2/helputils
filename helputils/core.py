@@ -2,6 +2,7 @@ import copy
 import errno
 import inspect
 import logging
+import logging.handlers
 import os
 import sys
 import traceback
@@ -102,14 +103,14 @@ def listdir_fullpath(d):
     return [os.path.join(d, f) for f in os.listdir(d)]
 
 
-def try_func(func, args, kwargs):
+def try_func(func, *args, **kwargs):
     """Try except wrapper."""
     try:
         val = func(*args, **kwargs)
         return val
     except Exception as e:
         log.error(format_exception(e))
-        return None
+        return False
 
 
 def similar(a, b):
@@ -130,12 +131,13 @@ def mkdir_p(path):
 
 def umount(mp, lazy=False):
     """Umounts given mountpoint. Can umount also with lazy switch."""
-    cmd_mount, cmd_lazy_umount = (["umount"], ["umount", "-l"])
+    cmd_umount, cmd_lazy_umount = (["/usr/bin/umount"], ["/usr/bin/umount", "-l"])
     cmd = cmd_lazy_umount if lazy else cmd_umount
-    p1 = Popen(cmd, stdout=PIPE, stderr=PIPE)
+    log.debug(cmd)
+    p1 = Popen(cmd + [mp], stdout=PIPE, stderr=PIPE)
     out, err = p1.communicate()
-    log.info(out, err)
-    log.info("Unmounted encfs")
+    log.info("umount: out: %s, err: %s" % (out, err))
+    log.info("Unmounted mp %s" % mp)
 
 
 def mount(dev, mp):
@@ -145,16 +147,20 @@ def mount(dev, mp):
         umount(mp)
         if os.path.ismount(mp):
             log.warning("Still mounted. Trying lazy unmount.")
-            umount(mp, lazy=True)
+            try_func(umount, mp, lazy=True)
             if os.path.ismount(mp):
                 log.error("Couldn't be unmounted.")
                 return False
     cmd_mount = ["mount", dev, mp]
-    p1 = Popen(cmd_mount, stdin=PIPE)
-    out, err = p1.communicate()
-    if p1.returncode != 0 or not os.path.ismount(mount_dir):
-        log.error("Mounting failed. Error: %s\n%s" % (out, err))
+    try:
+        p1 = Popen(cmd_mount, stdin=PIPE)
+        out, err = p1.communicate()
+        if p1.returncode != 0 or not os.path.ismount(mp):
+            log.error("Mounting failed. Error: %s\n%s" % (out, err))
+            return False
+        else:
+            log.info("Mounted %s to %s" % (dev, mp))
+            return True
+    except Exception as e:
+        log.error(format_exception(e))
         return False
-    else:
-        log.info("Mounted %s to %s" (dev, mp))
-        return True

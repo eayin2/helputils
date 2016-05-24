@@ -4,6 +4,7 @@ import inspect
 import logging
 import logging.handlers
 import os
+import socket
 import sys
 import traceback
 from difflib import SequenceMatcher
@@ -57,6 +58,15 @@ class SetupLogger():
 log = SetupLogger('vvv')
 
 
+def islocal(hn1):
+    """Checks if the hostname is the local hostname"""
+    hn2 = socket.gethostname()
+    if hn1 in hn2 or hn2 in hn1:
+        return True
+    else:
+        return False
+
+
 def rsync(src, dst, remote_host=None, exclude=list()):
     """Rsync wrapper with exclude and remote_host"""
     src = os.path.normpath(src)
@@ -79,10 +89,17 @@ def is_number(s):
         return False
 
 
-def find_mount_point(path):
-    path = os.path.abspath(path)
-    while not os.path.ismount(path):
-        path = os.path.dirname(path)
+def find_mount_point(path, hn=False):
+    """Finds mount point for remote (requires that the name of the ssh alias is the hostname's name) and local system
+       recursively by traversing directories in reverse direction."""
+    if hn and not islocal(hn):
+        p1 = Popen([ssh, hn, "findmnt", "-T", path, "-n", "-o", "TARGET"], stdout=PIPE)
+        path = p1.communicate[0].decode("UTF-8")
+    else:
+        path = os.path.abspath(path)
+        while not os.path.ismount(path):
+            path = os.path.dirname(path)
+    log.info("mountpoint is: %s" % path)
     return path
 
 
@@ -101,6 +118,13 @@ def format_exception(e):
 def listdir_fullpath(d):
     """List dirs in given director with their fullpath."""
     return [os.path.join(d, f) for f in os.listdir(d)]
+
+
+def remote_file_content(hn, fn):
+    """Returns files content UTF-8 decoded via ssh by the given hostname and filename."""
+    log.info("content of %s:%s (hn:filename)" % (hn, fn))
+    p1 = Popen(["ssh", hn, "sudo", "/usr/bin/cat", fn], stdout=PIPE)
+    return p1.communicate()[0].decode("UTF-8").split()
 
 
 def try_func(func, *args, **kwargs):
@@ -155,12 +179,13 @@ def mount(dev, mp):
     try:
         p1 = Popen(cmd_mount, stdin=PIPE)
         out, err = p1.communicate()
-        if p1.returncode != 0 or not os.path.ismount(mp):
-            log.error("Mounting failed. Error: %s\n%s" % (out, err))
-            return False
-        else:
+        log.debug("out: %s, err: %s" % (out, err))
+        if p1.returncode == 0 and os.path.ismount(mp):
             log.info("Mounted %s to %s" % (dev, mp))
             return True
+        else:
+            log.error("Mounting failed. Error: %s\n%s" % (out, err))
+            return False
     except Exception as e:
         log.error(format_exception(e))
         return False

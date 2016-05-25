@@ -71,10 +71,10 @@ class SetupLogger():
 log = SetupLogger('vvv')
 
 
-def isremotefile(f, hn=False):
+def _isfile(f, hn=False):
     """Checks if file is a file, either locally or remotely."""
     cmd = ["file", "-b", f]
-    if hn:
+    if hn and not islocal(hn):
         cmd = ["ssh", hn] + cmd
     p1 = Popen(cmd, stdout=PIPE)
     out = p1.communicate()[0].decode("UTF-8")
@@ -89,6 +89,7 @@ def isremotefile(f, hn=False):
 def islocal(hn1):
     """Checks if the hostname is the local hostname"""
     hn2 = socket.gethostname()
+    log.debug("hn1: %s hn2: %s" % (hn1, hn2))
     if hn1 in hn2 or hn2 in hn1:
         return True
     else:
@@ -120,10 +121,14 @@ def is_number(s):
 def find_mountpoint(path, hn=False):
     """Returns mountpoint from local or given remote system (requires ssh alias for hostname to be configured)."""
     cmd = ["findmnt", "-T", path, "-n", "-o", "TARGET"]
-    if hn:
+    log.debug("hn: %s, path %s" % (hn, path))
+    if hn and not islocal(hn):
         cmd = ["ssh", hn] + cmd
-    p1 = Popen(cmd, stdout=PIPE)
-    path = p1.communicate()[0].decode("UTF-8").strip()
+        log.debug("cmd: %s" % str(cmd))
+    p1 = Popen(cmd, stdout=PIPE, stderr=PIPE)
+    path, err = p1.communicate()
+    path = path.decode("UTF-8").strip()
+    log.debug("err: %s" % err)
     log.info("mountpoint is: %s" % path)
     return path
 

@@ -26,9 +26,9 @@ blue, magenta, cyan, blue = _wrap_with('34'), _wrap_with('35'), _wrap_with('36')
 
 
 class SetupLogger():
-    """Logs to syslog and console with some format conveniences. Instantiating class here, because other functions in here are
-       dependent on this logger. So import the instance log from here and don't create a new instance of SetupLogger unless you
-       want to derive from it."""
+    """Logs to syslog and console with some format conveniences. Instantiating class here, because other functions in
+       here are dependent on this logger. So import the instance log from here and don't create a new instance of
+       SetupLogger unless you want to derive from it."""
 
     def __init__(self, verbose):
         logging.basicConfig(format='%(message)s')
@@ -187,6 +187,8 @@ def umount(mp, lazy=False):
     """Umounts given mountpoint. Can umount also with lazy switch."""
     cmd_umount, cmd_lazy_umount = (["/usr/bin/umount"], ["/usr/bin/umount", "-l"])
     cmd = cmd_lazy_umount if lazy else cmd_umount
+    if fuser:
+        cmd_umount, cmd_lazy_umount = (["/usr/bin/fusermount", "-u"], ["/usr/bin/fusermount", "-u", "-z"])
     log.debug(cmd)
     p1 = Popen(cmd + [mp], stdout=PIPE, stderr=PIPE)
     out, err = p1.communicate()
@@ -219,3 +221,14 @@ def mount(dev, mp):
     except Exception as e:
         log.error(format_exception(e))
         return False
+
+
+def systemd_services_up(services):
+    """Checks if given systems services are up, if not it exists."""
+    for x in services:
+        p = Popen(["systemctl", "is-active", x], stdout=PIPE, stderr=PIPE)
+        out, err = p.communicate()
+        out = out.decode("utf-8").strip()
+        if "failed" == out:
+            log.info("Exiting, because dependent services are down: %s" % services)
+            sys.exit()

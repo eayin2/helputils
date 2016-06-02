@@ -183,12 +183,12 @@ def mkdir_p(path):
             raise
 
 
-def umount(mp, lazy=False):
+def umount(mp, lazy=False, fuser=False):
     """Umounts given mountpoint. Can umount also with lazy switch."""
     cmd_umount, cmd_lazy_umount = (["/usr/bin/umount"], ["/usr/bin/umount", "-l"])
-    cmd = cmd_lazy_umount if lazy else cmd_umount
     if fuser:
         cmd_umount, cmd_lazy_umount = (["/usr/bin/fusermount", "-u"], ["/usr/bin/fusermount", "-u", "-z"])
+    cmd = cmd_lazy_umount if lazy else cmd_umount
     log.debug(cmd)
     p1 = Popen(cmd + [mp], stdout=PIPE, stderr=PIPE)
     out, err = p1.communicate()

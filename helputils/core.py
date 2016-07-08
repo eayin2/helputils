@@ -6,12 +6,13 @@ import logging.handlers
 import os
 import requests
 import socket
-from six import iteritems
 import sys
 import traceback
 from difflib import SequenceMatcher
-from gymail.core import send_mail
+from six import iteritems
 from subprocess import Popen, PIPE
+
+from gymail.core import send_mail
 
 
 def _wrap_with(code):

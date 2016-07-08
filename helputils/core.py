@@ -300,9 +300,8 @@ def multilog(only_first=False, **kwargs):
         if only_first and isinstance(v, list):
             if v:
                 v = v[0]
-        if len(v) > 80:
-            m = "\n{0}: {1},\n".format(k, v)
-        else:
-            m = "{0}: {1}, ".format(k, v)
+        m = "{0}: {1},".format(k, v)
+        if len(m) > 80:
+            m = "\n{0}\n".format(m)
         merged += m
     log.debug(merged)

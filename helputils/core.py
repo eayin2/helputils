@@ -4,10 +4,13 @@ import inspect
 import logging
 import logging.handlers
 import os
+import requests
 import socket
+from six import iteritems
 import sys
 import traceback
 from difflib import SequenceMatcher
+from gymail.core import send_mail
 from subprocess import Popen, PIPE
 
 
@@ -21,6 +24,10 @@ def _wrap_with(code):
     return inner
 
 
+tor_proxies = {
+    'http': 'socks5://127.0.0.1:9050',
+    'https': 'socks5://127.0.0.1:9050'
+}
 red, green, yellow = _wrap_with('31'), _wrap_with('32'), _wrap_with('33')
 blue, magenta, cyan, blue = _wrap_with('34'), _wrap_with('35'), _wrap_with('36'), _wrap_with('37')
 
@@ -31,7 +38,6 @@ class SetupLogger():
        SetupLogger unless you want to derive from it."""
 
     def __init__(self, verbose):
-        logging.basicConfig(format='%(message)s')
         self.logger = logging.getLogger()  # Initializing Logger
         syslog_handler = logging.handlers.SysLogHandler('/dev/log')
         self.logger.addHandler(syslog_handler)  # Add SysLogHandler
@@ -96,11 +102,12 @@ def islocal(hn1):
         return False
 
 
-def rsync(src, dst, remote_host=None, exclude=list()):
+def rsync(src, dst, remote_host=None, exclude=list(), tor=False):
     """Rsync wrapper with exclude and remote_host"""
     src = os.path.normpath(src)
+    torsocks = ["torsocks"] if tor else []
     if remote_host:
-        p1 = Popen(["rsync", "-avHAXx"] + exclude + [src, "{0}:{1}".format(remote_host, dst)], stdout=PIPE)
+        p1 = Popen(torsocks + ["rsync", "-avHAXx"] + exclude + [src, "{0}:{1}".format(remote_host, dst)], stdout=PIPE)
     else:
         p1 = Popen(["rsync", "-avHAXx"] + exclude + [src, dst], stdout=PIPE)
     log.info(p1.communicate())
@@ -232,3 +239,69 @@ def systemd_services_up(services):
         if "failed" == out:
             log.info("Exiting, because dependent services are down: %s" % services)
             sys.exit()
+
+
+def my_ip(proxies=None):
+    kwargs = { "proxies": proxies } if proxies else {}
+    url = 'http://myip.dnsomatic.com'
+    r = requests.get(url, **kwargs)
+    return r.text
+
+
+def download(filename, download_link, proxies=None, tor=False):
+    """Download file from given download link to given local filename path."""
+    with open(filename, 'wb') as f:
+        kwargs = {}
+        if tor:
+            log.debug("requests with tor enabled, using requests >=2.10 with socks5 support.")
+            log.debug("Current IP: %s" % my_ip(proxies=tor_proxies))
+            kwargs = { "proxies": tor_proxies }
+        elif proxies:
+            log.debug("Using custom proxies.")
+            log.debug("Current IP: %s" % my_ip(proxies=proxies))
+            kwargs = { "proxies": proxies }
+        response = requests.get(download_link, stream=True, **kwargs)
+        if not response.ok:
+            send_mail(event="error", subject=os.path.basename(__file__),
+                      message="Download from %s failed. Site possibly down." % download_link)
+        for block in response.iter_content(1024):
+            f.write(block)
+
+
+def newest_dir(b='.'):
+    """Returns newest (=last modified) directory of given path."""
+    all_dirs = []
+    for d in os.listdir(b):
+        bd = os.path.join(b, d)
+        if os.path.isdir(bd): all_dirs.append(bd)
+    newest_dir = max(all_dirs, key=os.path.getmtime)
+    return newest_dir
+
+
+def handle_exceptions(fn):
+    """Decorator for functions/methods to catch exceptions, apply with @handle_exception above method."""
+    from functools import wraps
+    @wraps(fn)
+    def wrapper(self, *args, **kw):
+        try:
+            return fn(self, *args, **kw)
+        except Exception as e:
+            log.error("Catched error with handle_exception decorator")
+            log.error(format_exception(e))
+    return wrapper
+
+
+def multilog(only_first=False, **kwargs):
+    """Convenience method, which prints the formated kwargs to log.debug(). If only_first is True, then only first
+    element of a list is printed to the logs, though strings are still printed completetly."""
+    merged = str()
+    for k, v in iteritems(kwargs):
+        if only_first and isinstance(v, list):
+            if v:
+                v = v[0]
+        if len(v) > 80:
+            m = "\n{0}: {1},\n".format(k, v)
+        else:
+            m = "{0}: {1}, ".format(k, v)
+        merged += m
+    log.debug(merged)

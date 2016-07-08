@@ -293,7 +293,7 @@ def handle_exceptions(fn):
 
 def multilog(only_first=False, **kwargs):
     """Convenience method, which prints the formated kwargs to log.debug(). If only_first is True, then only first
-    element of a list is printed to the logs, though strings are still printed completetly."""
+    element of a list is printed to the logs, though strings are still printed completely."""
     merged = str()
     for k, v in iteritems(kwargs):
         if only_first and isinstance(v, list):

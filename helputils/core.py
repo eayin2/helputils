@@ -1,13 +1,16 @@
 import copy
 import errno
 import inspect
+import locale
 import logging
 import logging.handlers
 import os
 import requests
 import socket
+import subprocess
 import sys
 import traceback
+from collections import OrderedDict, Callable
 from difflib import SequenceMatcher
 from functools import wraps
 from six import iteritems
@@ -45,6 +48,8 @@ class SetupLogger():
         syslog_handler = logging.handlers.SysLogHandler('/dev/log')
         self.logger.addHandler(syslog_handler)  # Add SysLogHandler
         self.console_handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.console_handler.setFormatter(formatter)
         self.logger.addHandler(self.console_handler)
         if verbose == "vvv":
             self.logger.setLevel(logging.DEBUG)
@@ -58,22 +63,22 @@ class SetupLogger():
         if newline > 0:
             self.newline(newline)
         if v:
-            self.logger.info("(I) {0}".format(message))
+            self.logger.info(message)
 
     def error(self, message, v=True):
         func = inspect.currentframe().f_back.f_code
         if v:
-            self.logger.error("{0}(E) {1}".format(func.co_name, red(message)))
+            self.logger.error("{0} {1}".format(func.co_name, red(message)))
 
     def warning(self, message, v=True):
         func = inspect.currentframe().f_back.f_code
         if v:
-            self.logger.warning("{0}(W) {1}".format(func.co_name, cyan(message)))
+            self.logger.warning("{0} {1}".format(func.co_name, cyan(message)))
 
     def debug(self, message, v=True):
         func = inspect.currentframe().f_back.f_code
         if v:
-            self.logger.debug("{0}(D) {1}".format(func.co_name, magenta(message)))
+            self.logger.debug("{0} {1}".format(func.co_name, magenta(message)))
 
     def newline(self, how_many_lines=1):
         for i in range(how_many_lines):
@@ -108,14 +113,16 @@ def islocal(hn1):
         return False
 
 
-def rsync(src, dst, remote_host=None, exclude=list(), tor=False):
+def rsync(src, dst, remote_host=None, exclude=list(), tor=False, rsync_args=None):
     """Rsync wrapper with exclude and remote_host"""
     src = os.path.normpath(src)
     torsocks = ["torsocks"] if tor else []
+    if not rsync_args:
+        rsync_args = ["-avHAXx"]
     if remote_host:
-        p1 = Popen(torsocks + ["rsync", "-avHAXx"] + exclude + [src, "{0}:{1}".format(remote_host, dst)], stdout=PIPE)
+        p1 = Popen(torsocks + ["rsync"] + rsync_args + exclude + [src, "{0}:{1}".format(remote_host, dst)], stdout=PIPE)
     else:
-        p1 = Popen(["rsync", "-avHAXx"] + exclude + [src, dst], stdout=PIPE)
+        p1 = Popen(["rsync"] + rsync_args + exclude + [src, dst], stdout=PIPE)
     log.info(p1.communicate())
     log.info(p1.returncode)
     if p1.returncode != 0:
@@ -185,15 +192,27 @@ def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
 
-def mkdir_p(path):
-    try:
-        os.makedirs(path)
-    except OSError as exc:
-        if exc.errno == errno.EEXIST and os.path.isdir(path):
-            pass
+def mkdir_p(dirs):
+    """Equivalent to linux command `mkdir -p`. Also accepts list of directories."""
+    if isinstance(dirs, str):
+        dirs = [dirs]
+    elif isinstance(dirs, list):
+        pass
+    else:
+        log.error("Pass a string or a list of strings to this function. Returning.")
+        return
+    for x in dirs:
+        if not os.path.exists(x):
+            try:
+                os.makedirs(x)
+            except OSError as exc:
+                if exc.errno == errno.EEXIST and os.path.isdir(path):
+                    pass
+                else:
+                    log.error("Could not create directory")
+                    pass
         else:
-            log.error("Could not create directory")
-            raise
+            log.info("Directory exists already.")
 
 
 def umount(mp, lazy=False, fuser=False):
@@ -356,3 +375,139 @@ def isempty(fn, isfile=None):
             return res
     except:
         return None
+
+
+def consecutive_comb(li):
+    """Alternatively:
+    for x, y in itertools.combinations(range(len(li) + 1), 2):
+        yield li[x:y]
+    """
+    combs= list()
+    for x in range(len(li)):
+        for y in range(len(li)):
+             z = li[x:y+1]
+             if z:
+                 combs.append(z)
+    return combs
+
+
+class DefaultOrderedDict(OrderedDict):
+    """ Source: http://stackoverflow.com/a/6190500/562769"""
+
+    def __init__(self, default_factory=None, *a, **kw):
+        if (default_factory is not None and
+           not isinstance(default_factory, Callable)):
+            raise TypeError('first argument must be callable')
+        OrderedDict.__init__(self, *a, **kw)
+        self.default_factory = default_factory
+
+    def __getitem__(self, key):
+        try:
+            return OrderedDict.__getitem__(self, key)
+        except KeyError:
+            return self.__missing__(key)
+
+    def __missing__(self, key):
+        if self.default_factory is None:
+            raise KeyError(key)
+        self[key] = value = self.default_factory()
+        return value
+
+    def __reduce__(self):
+        if self.default_factory is None:
+            args = tuple()
+        else:
+            args = self.default_factory,
+        return type(self), args, None, None, self.items()
+
+    def copy(self):
+        return self.__copy__()
+
+    def __copy__(self):
+        return type(self)(self.default_factory, self)
+
+    def __deepcopy__(self, memo):
+        import copy
+        return type(self)(self.default_factory,
+                          copy.deepcopy(self.items()))
+
+    def __repr__(self):
+        return 'OrderedDefaultDict(%s, %s)' % (self.default_factory,
+                                               OrderedDict.__repr__(self))
+
+
+def rchown(path, user, group):
+    """Recursively chowns given path with given user/group"""
+    p = Popen(["chown", "-R", "%s:%s" % (user, group), path], stdout=PIPE, stderr=PIPE)
+    o, e = p.communicate()
+    if e:
+        log.error(e)
+
+
+class Map(dict):
+    """Extends the dictionary object, so that you can access the dictionary keys like attributes.
+
+    Example: m = Map({'first_name': 'Eduardo'}, last_name='Pool', age=24, sports=['Soccer'])
+    Then you'd be able to access the dictionary as such: `person.age`. So it's a convenience class.
+    Source: http://stackoverflow.com/a/32107024
+    """ 
+    def __init__(self, *args, **kwargs):
+        super(Map, self).__init__(*args, **kwargs)
+        for arg in args:
+            if isinstance(arg, dict):
+                for k, v in arg.items():
+                    self[k] = v
+
+        if kwargs:
+            for k, v in kwargs.items():
+                self[k] = v
+
+    def __getattr__(self, attr):
+        return self.get(attr)
+
+    def __setattr__(self, key, value):
+        self.__setitem__(key, value)
+
+    def __setitem__(self, key, value):
+        super(Map, self).__setitem__(key, value)
+        self.__dict__.update({key: value})
+
+    def __delattr__(self, item):
+        self.__delitem__(item)
+
+    def __delitem__(self, key):
+        super(Map, self).__delitem__(key)
+        del self.__dict__[key]
+
+
+def ismount_remote(host, path):
+    """Checks if a directory is mounted on a host accessible with SSH.
+
+    Alternatively with shlex.quote: ["ssh", host, "mountpoint {}".format(shlex.quote(path))])
+    """
+    status = subprocess.call(
+        ["ssh", host, "mountpoint", path])
+    if status == 0:
+        return True
+    if status == 1:
+        return False
+    raise Exception('SSH failed')
+
+
+def prettydict(d, indent=0):
+    """Print dictionary pretty"""
+    for key, value in iteritems(d):
+        print('\t' * indent + str(key))
+        if isinstance(value, dict):
+            pretty(value, indent+1)
+        else:
+            print('\t' * (indent+1) + str(value))
+
+
+def setlocals():
+    """Gets your default locales and sets them for your current python instance.
+
+    This is useful when you work with datetime.strptime and want to make use of %b.
+    """
+    my_locals = ".".join(locale.getdefaultlocale())
+    locale.setlocale(locale.LC_TIME,(my_locals, my_locals))

@@ -173,7 +173,7 @@ def listdir_fullpath(d):
 def remote_file_content(hn, fn):
     """Returns files content UTF-8 decoded via ssh by the given hostname and filename."""
     log.info("content of %s:%s (hn:filename)" % (hn, fn))
-    p1 = Popen(["ssh", hn, "sudo", "/usr/bin/cat", fn], stdout=PIPE)
+    p1 = Popen(["ssh", hn, "sudo", "-tt", "/usr/bin/cat", fn], stdout=PIPE)
     return p1.communicate()[0].decode("UTF-8").split("\n")
 
 

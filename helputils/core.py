@@ -18,7 +18,7 @@ from subprocess import Popen, PIPE
 
 from pymongo import MongoClient
 from gymail.core import send_mail
-from defaultlog import log
+from .defaultlog import log
 
 tor_proxies = {
     'http': 'socks5://127.0.0.1:9050',

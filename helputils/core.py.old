@@ -18,12 +18,74 @@ from subprocess import Popen, PIPE
 
 from pymongo import MongoClient
 from gymail.core import send_mail
-from defaultlog import log
+
+
+def _wrap_with(code):
+
+    def inner(text, bold=False):
+        c = code
+        if bold:
+            c = "1;%s" % c
+        return "\033[%sm%s\033[0m" % (c, text)
+    return inner
+
 
 tor_proxies = {
     'http': 'socks5://127.0.0.1:9050',
     'https': 'socks5://127.0.0.1:9050'
 }
+red, green, yellow = _wrap_with('31'), _wrap_with('32'), _wrap_with('33')
+blue, magenta, cyan, blue = _wrap_with('34'), _wrap_with('35'), _wrap_with('36'), _wrap_with('37')
+
+
+class SetupLogger():
+    """Logs to syslog and console with some format conveniences. Instantiating class here, because other functions in
+       here are dependent on this logger. So import the instance log from here and don't create a new instance of
+       SetupLogger unless you want to derive from it."""
+
+    def __init__(self, verbose):
+        self.logger = logging.getLogger()  # Initializing Logger
+        syslog_handler = logging.handlers.SysLogHandler('/dev/log')
+        self.logger.addHandler(syslog_handler)  # Add SysLogHandler
+        self.console_handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.console_handler.setFormatter(formatter)
+        self.logger.addHandler(self.console_handler)
+        if verbose == "vvv":
+            self.logger.setLevel(logging.DEBUG)
+        elif verbose == "vv":
+            self.logger.setLevel(logging.INFO)
+        elif verbose == "v":
+            self.logger.setLevel(logging.ERROR)
+
+    def info(self, message, newline=0, v=True):
+        """Automatically log the current function details."""
+        if newline > 0:
+            self.newline(newline)
+        if v:
+            self.logger.info(message)
+
+    def error(self, message, v=True):
+        func = inspect.currentframe().f_back.f_code
+        if v:
+            self.logger.error("{0} {1}".format(func.co_name, red(message)))
+
+    def warning(self, message, v=True):
+        func = inspect.currentframe().f_back.f_code
+        if v:
+            self.logger.warning("{0} {1}".format(func.co_name, cyan(message)))
+
+    def debug(self, message, v=True):
+        func = inspect.currentframe().f_back.f_code
+        if v:
+            self.logger.debug("{0} {1}".format(func.co_name, magenta(message)))
+
+    def newline(self, how_many_lines=1):
+        for i in range(how_many_lines):
+            self.logger.info('')
+
+
+log = SetupLogger('vvv')
 
 
 def _isfile(f, hn=False):

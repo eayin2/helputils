@@ -449,3 +449,32 @@ def setlocals():
     """
     my_locals = ".".join(locale.getdefaultlocale())
     locale.setlocale(locale.LC_TIME,(my_locals, my_locals))
+
+
+def isup(host, port=22, timeout=4):
+    """Check if port is available on host."""
+    socket.setdefaulttimeout(timeout)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.connect((host, port))
+        log.info("Port %s on host %s is reachable." % (port, host))
+        s.close()
+        return True
+    except socket.error as e:
+        log.error("Error on connect: %s" % e)
+        s.close()
+        return False
+
+
+def validate_ip(s):
+    """Validate IPv4 address format."""
+    a = s.split('.')
+    if len(a) != 4:
+        return None
+    for x in a:
+        if not x.isdigit():
+            return None
+        i = int(x)
+        if i < 0 or i > 255:
+            return None
+    return s

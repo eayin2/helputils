@@ -3,7 +3,7 @@ from setuptools import find_packages
 
 setup(
     name="helputils",
-    version="0.8.7",
+    version="0.9.2",
     author="eayin2",
     author_email="eayin2@gmail.com",
     packages=find_packages(),

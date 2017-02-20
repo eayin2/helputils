@@ -9,9 +9,11 @@ import requests
 import socket
 import subprocess
 import sys
+import time
 import traceback
 from collections import OrderedDict, Callable
 from difflib import SequenceMatcher
+from time import sleep
 from functools import wraps
 from six import iteritems
 from subprocess import Popen, PIPE
@@ -51,16 +53,26 @@ def islocal(hn1):
         return False
 
 
-def rsync(src, dst, remote_host=None, exclude=list(), tor=False, rsync_args=None):
-    """Rsync wrapper with exclude and remote_host"""
+def rsync(src, dst, exclude=list(), tor=False, rsync_args=None, strict=True, ssh_key=None, port=None):
+    """Rsync wrapper with exclude and remote_host. 
+
+    If you need a remote host simply write e.g. as src `phserver01:/root/some_dir/`. Doesn't support keys with
+    passphrases.
+    """
     src = os.path.normpath(src)
     torsocks = ["torsocks"] if tor else []
     if not rsync_args:
         rsync_args = ["-avHAXx"]
-    if remote_host:
-        p1 = Popen(torsocks + ["rsync"] + rsync_args + exclude + [src, "{0}:{1}".format(remote_host, dst)], stdout=PIPE)
-    else:
-        p1 = Popen(["rsync"] + rsync_args + exclude + [src, dst], stdout=PIPE)
+    ssh_args = list()
+    if not strict:
+        ssh_args.append("-o StrictHostKeyChecking=no")
+    if port:
+        ssh_args.append("-p %s" % port)
+    if ssh_key:
+        ssh_args.append("-i %s" % ssh_key)
+    if ssh_args:
+        rsync_args += ["-e", "ssh %s" % " ".join(ssh_args)]  # -e [specifies] the remote shell to use
+    p1 = Popen(torsocks + ["rsync"] + rsync_args + exclude + [src, dst], stdout=PIPE)
     log.info(p1.communicate())
     log.info(p1.returncode)
     if p1.returncode != 0:
@@ -451,19 +463,23 @@ def setlocals():
     locale.setlocale(locale.LC_TIME,(my_locals, my_locals))
 
 
-def isup(host, port=22, timeout=4):
+def isup(host, port=22, timeout=60):
     """Check if port is available on host."""
-    socket.setdefaulttimeout(timeout)
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.connect((host, port))
-        log.info("Port %s on host %s is reachable." % (port, host))
-        s.close()
-        return True
-    except socket.error as e:
-        log.error("Error on connect: %s" % e)
-        s.close()
-        return False
+    socket.setdefaulttimeout(10)
+    timeout = time.time() + timeout
+    while True:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.connect((host, port))
+            log.info("Port %s on host %s is reachable." % (port, host))
+            s.close()
+            return True
+        except socket.error as e:
+            log.error("Error on connect: %s" % e)
+            s.close()
+        if time.time() > timeout:
+            return False
+        sleep(6)
 
 
 def validate_ip(s):

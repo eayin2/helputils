@@ -3,30 +3,32 @@ from logging import getLogger
 from logging.config import dictConfig
 
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'default': {
-            'format': '[%(levelname)s] %(name)s: %(message)s'
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "[%(levelname)s] %(name)s: %(message)s"
         }
     },
-    'handlers': {
-        'stdout': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'default',
-            'stream': 'ext://sys.stdout'
+    "handlers": {
+        "stdout": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": "ext://sys.stdout"
         },
         "syslog": {
             "class": "logging.handlers.SysLogHandler",
-            'formatter': 'default',
-            'address': '/dev/log'
+            "formatter": "default",
+            "address": "/dev/log"
         }
     },
-    'loggers': {
-        '': {
-            'handlers': ['stdout', 'syslog'],
-            'level': 'DEBUG',
-            'propagate': True
+    "loggers": {
+        "": {
+            # Considering that systemd redirects stdout anyways to journald, we just need the stdout handler,
+            # else we get dupe log messages in journald.
+            "handlers": ["stdout", "syslog"],
+            "level": "DEBUG",
+            "propagate": False
         }
     }
 }

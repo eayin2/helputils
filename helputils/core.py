@@ -18,6 +18,7 @@ from functools import wraps
 from six import iteritems
 from subprocess import Popen, PIPE
 
+from PIL import Image
 from pymongo import MongoClient
 from gymail.core import send_mail
 from .defaultlog import log
@@ -54,12 +55,13 @@ def islocal(hn1):
 
 
 def rsync(src, dst, exclude=list(), tor=False, rsync_args=None, strict=True, ssh_key=None, port=None):
-    """Rsync wrapper with exclude and remote_host. 
+    """Rsync wrapper with exclude and remote_host.
 
     If you need a remote host simply write e.g. as src `phserver01:/root/some_dir/`. Doesn't support keys with
     passphrases.
     """
     src = os.path.normpath(src)
+    src = src + "/"
     torsocks = ["torsocks"] if tor else []
     if not rsync_args:
         rsync_args = ["-avHAXx"]
@@ -73,7 +75,8 @@ def rsync(src, dst, exclude=list(), tor=False, rsync_args=None, strict=True, ssh
     if ssh_args:
         rsync_args += ["-e", "ssh %s" % " ".join(ssh_args)]  # -e [specifies] the remote shell to use
     p1 = Popen(torsocks + ["rsync"] + rsync_args + exclude + [src, dst], stdout=PIPE)
-    log.info(p1.communicate())
+    stdout = p1.communicate()[0].decode("UTF-8")
+    log.info(stdout[:100])  # truncating string if it's too long
     log.info(p1.returncode)
     if p1.returncode != 0:
         log.error("Rsync error. sendmail")
@@ -115,9 +118,23 @@ def format_exception(e):
     return exception_str
 
 
-def listdir_fullpath(d):
-    """List dirs in given director with their fullpath."""
-    return [os.path.join(d, f) for f in os.listdir(d)]
+def listdir_fullpath(d, match=[]):
+    """List dirs in given directory with their fullpath."""
+    if match:
+        return [os.path.join(d, f) for f in os.listdir(d) if any(x in f for x in match)]
+    else:
+        return [os.path.join(d, f) for f in os.listdir(d)]
+    
+
+def listdir_fullpath_not(d, match=[]):
+    """List dirs in given directory with their fullpath."""
+    return [os.path.join(d, f) for f in os.listdir(d) if not any(x in f for x in match)]
+
+
+def listdir_fullpath_not_shadowfile(d, prefix):
+    """List files in given directory that have not a shadow file with the given prefix."""
+    return [os.path.join(d, f) for f in os.listdir(d) if not os.path.isfile(os.path.join(d, "%s_%s" % (prefix, f)))
+            and not prefix in f]
 
 
 def remote_file_content(hn, fn):
@@ -299,9 +316,9 @@ def createmongo(database, collection):
     return collection
 
 
-def grep(path, text):
+def grep(path, match):
     """grep wrapper"""
-    p1 = Popen(["grep", "-lR", text, path], stdout=PIPE)
+    p1 = Popen(["grep", "-lR", match, path], stdout=PIPE)
     fn = p1.communicate()[0].decode("UTF-8").split()
     return fn
 
@@ -400,7 +417,7 @@ class Map(dict):
     Example: m = Map({'first_name': 'Eduardo'}, last_name='Pool', age=24, sports=['Soccer'])
     Then you'd be able to access the dictionary as such: `person.age`. So it's a convenience class.
     Source: http://stackoverflow.com/a/32107024
-    """ 
+    """
     def __init__(self, *args, **kwargs):
         super(Map, self).__init__(*args, **kwargs)
         for arg in args:
@@ -494,3 +511,31 @@ def validate_ip(s):
         if i < 0 or i > 255:
             return None
     return s
+
+
+class ResizeImg():
+
+    def __init__(self, imgdir=None, size=None):
+        self.imgdir = imgdir
+        self.size = size
+
+    def run_all(self):
+        log.info("Resizing all files in %s" % self.imgdir)
+        imgs = listdir_fullpath(self.imgdir)
+        for x in imgs:
+            self.resize(x, self.size)
+
+    def resize(self, x, size):
+        log.info("Resizing %s to %sx%s" % ((x,) + size))
+        im = Image.open(x)
+        dirname = os.path.dirname(x)
+        basename = os.path.basename(x)
+        log.debug("Dirname of image %s" % dirname)
+        log.debug("Basename of image %s" % basename)
+        im.thumbnail(size, Image.ANTIALIAS)
+        try:
+            im.save(os.path.join(dirname, "%s_%s_%s" % (size + (basename,))))
+            return True
+        except Exception as e:
+            log.error("Skipping resize. Traceback: %s" % format_exception(e))
+            return None

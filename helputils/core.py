@@ -16,17 +16,34 @@ from difflib import SequenceMatcher
 from time import sleep
 from functools import wraps
 from six import iteritems
+from six.moves.urllib.parse import urlparse, parse_qs
 from subprocess import Popen, PIPE
 
 from PIL import Image
 from pymongo import MongoClient
-from gymail.core import send_mail
+try:
+    from gymail.core import send_mail
+    has_gymail = True
+except:
+    has_gymail = False
 from .defaultlog import log
 
 tor_proxies = {
     'http': 'socks5://127.0.0.1:9050',
     'https': 'socks5://127.0.0.1:9050'
 }
+
+
+def youtube_id(url):
+    """Return youtube id from a youtube link"""
+    url_data = urlparse(url)
+    query = parse_qs(url_data.query)
+    try:
+        yt_id = query["v"][0]
+    except:
+        log.error("Link is not a youtube video, maybe a playlist? %s" % url)
+        return None
+    return yt_id
 
 
 def _isfile(f, hn=False):
@@ -124,7 +141,7 @@ def listdir_fullpath(d, match=[]):
         return [os.path.join(d, f) for f in os.listdir(d) if any(x in f for x in match)]
     else:
         return [os.path.join(d, f) for f in os.listdir(d)]
-    
+
 
 def listdir_fullpath_not(d, match=[]):
     """List dirs in given directory with their fullpath."""
@@ -140,7 +157,7 @@ def listdir_fullpath_not_shadowfile(d, prefix):
 def remote_file_content(hn, fn):
     """Returns files content UTF-8 decoded via ssh by the given hostname and filename."""
     log.info("content of %s:%s (hn:filename)" % (hn, fn))
-    p1 = Popen(["ssh", "-tt", hn, "sudo", "/usr/bin/cat", fn], stdout=PIPE)
+    p1 = Popen(["ssh", "-tt", hn, "sudo", "cat", fn], stdout=PIPE)
     return p1.communicate()[0].decode("UTF-8").split("\n")
 
 
@@ -184,9 +201,9 @@ def mkdir_p(dirs):
 
 def umount(mp, lazy=False, fuser=False):
     """Umounts given mountpoint. Can umount also with lazy switch."""
-    cmd_umount, cmd_lazy_umount = (["/usr/bin/umount"], ["/usr/bin/umount", "-l"])
+    cmd_umount, cmd_lazy_umount = (["umount"], ["umount", "-l"])
     if fuser:
-        cmd_umount, cmd_lazy_umount = (["/usr/bin/fusermount", "-u"], ["/usr/bin/fusermount", "-u", "-z"])
+        cmd_umount, cmd_lazy_umount = (["fusermount", "-u"], ["fusermount", "-u", "-z"])
     cmd = cmd_lazy_umount if lazy else cmd_umount
     log.debug(cmd)
     p1 = Popen(cmd + [mp], stdout=PIPE, stderr=PIPE)
@@ -254,8 +271,10 @@ def download(filename, download_link, proxies=None, tor=False):
             kwargs = { "proxies": proxies }
         response = requests.get(download_link, stream=True, **kwargs)
         if not response.ok:
-            send_mail(event="error", subject=os.path.basename(__file__),
-                      message="Download from %s failed. Site possibly down." % download_link)
+            if has_gymail:
+                send_mail(event="error", subject=os.path.basename(__file__),
+                        message="Download from %s failed. Site possibly down." % download_link)
+            log.error("Download from %s failed. Site possibly down.")
             return False
         for block in response.iter_content(1024):
             f.write(block)

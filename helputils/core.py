@@ -1,6 +1,7 @@
 import copy
 import errno
 import inspect
+import hashlib
 import locale
 import logging
 import logging.handlers
@@ -13,11 +14,12 @@ import time
 import traceback
 from collections import OrderedDict, Callable
 from difflib import SequenceMatcher
-from time import sleep
 from functools import wraps
+from math import ceil
 from six import iteritems
 from six.moves.urllib.parse import urlparse, parse_qs
 from subprocess import Popen, PIPE
+from time import sleep
 
 from PIL import Image
 from pymongo import MongoClient
@@ -32,6 +34,44 @@ tor_proxies = {
     'http': 'socks5://127.0.0.1:9050',
     'https': 'socks5://127.0.0.1:9050'
 }
+PY3 = sys.version_info[0] == 3
+if PY3:
+    text_type = str
+    string_types = (str,)
+
+    def to_bytes(text):
+        if not isinstance(text, bytes):
+            text = bytes(text, 'utf8')
+        return text
+else:
+    text_type = unicode
+    string_types = (str, unicode)
+
+    def to_bytes(text):
+        if not isinstance(text, string_types):
+            text = text_type(text)
+        return text
+
+
+def evenspread(sequence, num):
+    """Return specified number of items out of sequence eavenly
+
+    - If num=1, then evenspread picks the first in the list,
+    """
+    length = float(len(sequence))
+    for i in range(num):
+        yield sequence[int(ceil(i * length / num))]
+
+
+def computehash(stream, algorithm, length=None):
+    """Compute hash of file using :attr:`algorithm`."""
+    hashobj = hashlib.new(algorithm)
+    for data in stream:
+        hashobj.update(to_bytes(data))
+    hash = hashobj.hexdigest()
+    if length:
+        hash = hash[:length]
+    return hash
 
 
 def youtube_id(url):
@@ -148,10 +188,17 @@ def listdir_fullpath_not(d, match=[]):
     return [os.path.join(d, f) for f in os.listdir(d) if not any(x in f for x in match)]
 
 
-def listdir_fullpath_not_shadowfile(d, prefix):
-    """List files in given directory that have not a shadow file with the given prefix."""
-    return [os.path.join(d, f) for f in os.listdir(d) if not os.path.isfile(os.path.join(d, "%s_%s" % (prefix, f)))
-            and not prefix in f]
+def listdir_fullpath_not_shadowfile(d, prefix, d2=None):
+    """List files in given directory that have not a shadow file with the given prefix.
+
+    E.g. when the prefix is 307_432, then the shadow file of /a/example would be
+    /a/307_432_example. If `d2 = b` then the shadowfile would be /b/307_432_example.
+    """
+    d3 = d2 if d2 else d
+    return [
+        os.path.join(d, f) for f in os.listdir(d) if not os.path.isfile(os.path.join(d3, "%s_%s" % (prefix, f)))
+        and not prefix in f
+        ]
 
 
 def remote_file_content(hn, fn):
@@ -340,6 +387,32 @@ def grep(path, match):
     p1 = Popen(["grep", "-lR", match, path], stdout=PIPE)
     fn = p1.communicate()[0].decode("UTF-8").split()
     return fn
+
+
+def find(path, match):
+    """Simple wrapper around the linux command `find`
+
+    Linux command find is faster than iterating over os.listdir().
+    """
+    p1 = Popen(["find", path, "-iname", "*%s*" % match], stdout=PIPE)
+    fn = p1.communicate()
+    fn = fn[0]
+    fn = fn.decode("UTF-8").split()
+    return fn
+
+
+def rfind(path, rmatch, rexclude="", newest=False):
+    """Regex match and exclude files using linux command `find`.
+
+    Linux command `find` is faster than iterating over os.listdir().
+    """
+    p1 = Popen(["find", path, "-regex", rmatch, "-not", "-regex", rexclude], stdout=newest(stream))
+    fns = p1.communicate()
+    fns = fns[0]
+    fns = fns.decode("UTF-8").split()
+    if newest:
+        fns = [max(fns , key=os.path.getctime)]
+    return fns
 
 
 def liget(l, idx, default=None):
@@ -534,8 +607,9 @@ def validate_ip(s):
 
 class ResizeImg():
 
-    def __init__(self, imgdir=None, size=None):
+    def __init__(self, dest=None, imgdir=None, size=None):
         self.imgdir = imgdir
+        self.dest = dest
         self.size = size
 
     def run_all(self):
@@ -547,14 +621,18 @@ class ResizeImg():
     def resize(self, x, size):
         log.info("Resizing %s to %sx%s" % ((x,) + size))
         im = Image.open(x)
-        dirname = os.path.dirname(x)
+        if not self.dest:
+            dirname = os.path.dirname(x)
+        else:
+            dirname = self.dest
         basename = os.path.basename(x)
         log.debug("Dirname of image %s" % dirname)
         log.debug("Basename of image %s" % basename)
         im.thumbnail(size, Image.ANTIALIAS)
+        fn = os.path.join(dirname, "%s_%s_%s" % (size + (basename,)))
         try:
-            im.save(os.path.join(dirname, "%s_%s_%s" % (size + (basename,))))
-            return True
+            im.save(fn)
+            return fn
         except Exception as e:
             log.error("Skipping resize. Traceback: %s" % format_exception(e))
             return None

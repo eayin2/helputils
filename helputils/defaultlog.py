@@ -16,6 +16,11 @@ LOGGING = {
             "formatter": "default",
             "stream": "ext://sys.stdout"
         },
+        "stderr": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": "ext://sys.stderr"
+        },
         "syslog": {
             "class": "logging.handlers.SysLogHandler",
             "formatter": "default",
@@ -26,7 +31,7 @@ LOGGING = {
         "": {
             # Considering that systemd redirects stdout anyways to journald, we just need the stdout handler,
             # else we get dupe log messages in journald.
-            "handlers": ["stdout", "syslog"],
+            "handlers": ["stdout", "syslog", "stderr"],
             "level": "DEBUG",
             "propagate": False
         }
@@ -34,3 +39,4 @@ LOGGING = {
 }
 dictConfig(LOGGING)
 log = getLogger()
+

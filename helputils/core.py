@@ -1,10 +1,13 @@
 import copy
 import errno
 import inspect
+import itertools
+import itertools
 import hashlib
 import locale
 import logging
 import logging.handlers
+import math
 import os
 import requests
 import socket
@@ -12,12 +15,13 @@ import subprocess
 import sys
 import time
 import traceback
-from collections import OrderedDict, Callable
+
+from collections import Callable, Counter, OrderedDict
 from difflib import SequenceMatcher
 from functools import wraps
 from math import ceil
 from six import iteritems
-from six.moves.urllib.parse import urlparse, parse_qs
+from six.moves.urllib.parse import urlparse, parse_qs, urljoin
 from subprocess import Popen, PIPE
 from time import sleep
 
@@ -34,10 +38,10 @@ tor_proxies = {
     'http': 'socks5://127.0.0.1:9050',
     'https': 'socks5://127.0.0.1:9050'
 }
-PY3 = sys.version_info[0] == 3
-if PY3:
+if sys.version_info[0] > 2:
     text_type = str
     string_types = (str,)
+
 
     def to_bytes(text):
         if not isinstance(text, bytes):
@@ -47,10 +51,83 @@ else:
     text_type = unicode
     string_types = (str, unicode)
 
+
     def to_bytes(text):
         if not isinstance(text, string_types):
             text = text_type(text)
         return text
+
+
+try:
+    from pathlib import Path
+
+
+    def touch(fname):
+        Path(fname).touch()
+except:
+    def touch(fname, times=None):
+        with open(fname, 'a'):
+            os.utime(fname, times)
+
+
+def kill_defuncts(name):
+    """Kill the pid and parent pid of any process that matches given name"""
+    p1 = Popen(["ps", "-ef"], stdout=PIPE)
+    out = p1.communicate()[0].decode("UTF-8").split("\n")
+    pids = []
+    ppids = []
+    for x1 in out:
+        if name in x1 and not "grep" in x1:
+            x2 = x1.split()
+            pids.append(x2[1])
+            ppids.append(x2[2])
+    log.info("Killing %s" % (pids + ppids))
+    subprocess.call(["kill", "-9"] + pids + ppids)
+
+
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
+
+def del_url_params(url):
+    """Removes all GET parameters from the URL."""
+    return urljoin(url, urlparse(url).path)
+
+
+def get_redirected(url, del_params=False, timeout=6):
+    """Get the url that a link eventually redirects to"""
+    if not url:
+        return None
+    try:
+        response = requests.get(url, timeout)
+    except:
+        sleep(20)
+        try:
+            response = requests.get(url, timeout)
+        except:
+            if has_gymail:
+                send_mail(
+                    event="error",
+                    subject=os.path.basename(__file__),
+                    message="Download from %s failed. Site possibly down." % url
+                )
+            log.error("Download from %s failed. Site possibly down." % url)
+            return None
+    if response.history:
+        print("Request was redirected")
+        for resp in response.history:
+            print(resp.status_code, resp.url)
+        print("Final destination:")
+        url = response.url
+        print(response.status_code, url)
+        if del_params:
+            url = del_url_params(url)
+        return url
+    else:
+        print("Request was not redirected")
+        return None
 
 
 def evenspread(sequence, num):
@@ -144,7 +221,7 @@ def is_number(s):
     try:
         float(s)
         return True
-    except ValueError:
+    except:
         return False
 
 
@@ -286,26 +363,49 @@ def mount(dev, mp):
         return False
 
 
+def systemd_service_state(name):
+    """Return False if the systemd service is down, otherwise return True"""
+    p = Popen(["systemctl", "is-active", "--quiet", name], stdout=PIPE, stderr=PIPE)
+    out, err = p.communicate()
+    if p.returncode == 0:
+        return True
+    else:
+        return False
+
+
 def systemd_services_up(services):
     """Checks if given systems services are up, if not it exists."""
     for x in services:
         p = Popen(["systemctl", "is-active", x], stdout=PIPE, stderr=PIPE)
         out, err = p.communicate()
-        out = out.decode("utf-8").strip()
-        if "failed" == out:
+        if p.returncode != 0:
             log.info("Exiting, because dependent services are down: %s" % services)
             sys.exit()
 
 
-def my_ip(proxies=None):
+def my_ip(proxies=None, timeout=6):
     kwargs = { "proxies": proxies } if proxies else {}
     url = 'http://myip.dnsomatic.com'
-    r = requests.get(url, **kwargs)
+    try:
+        r = requests.get(url, timeout, **kwargs)
+    except:
+        if has_gymail:
+            send_mail(
+                event="error",
+                subject=os.path.basename(__file__),
+                message="Download from %s failed. Site possibly down." % url
+            )
+        log.error("Download from %s failed. Site possibly down." % url)
+        return None
     return r.text
 
 
-def download(filename, download_link, proxies=None, tor=False):
-    """Download file from given download link to given local filename path."""
+def download(filename, download_link, timeout=6, proxies=None, tor=False, display_ip=False):
+    """Download file from given download link to given local filename path.
+
+    timeout := Nearly all production code should use this parameter in nearly all requests. Failure to do so can cause
+               your program to hang indefinitely:
+    """
     with open(filename, 'wb') as f:
         kwargs = {}
         if tor:
@@ -314,18 +414,40 @@ def download(filename, download_link, proxies=None, tor=False):
             kwargs = { "proxies": tor_proxies }
         elif proxies:
             log.debug("Using custom proxies.")
-            log.debug("Current IP: %s" % my_ip(proxies=proxies))
+            if display_ip:
+                log.debug("Current IP: %s" % my_ip(proxies=proxies))
             kwargs = { "proxies": proxies }
-        response = requests.get(download_link, stream=True, **kwargs)
-        if not response.ok:
+        # Preventing exceptions when it times out due to temporary network issues
+        # Try/Except is important here, because during network issues it will cause an exception.
+        try:
+            log.debug("Starting HTTP request to %s" % download_link)
+            response = requests.get(download_link, timeout=timeout, stream=True, **kwargs)
+        except:
             if has_gymail:
                 send_mail(event="error", subject=os.path.basename(__file__),
                         message="Download from %s failed. Site possibly down." % download_link)
-            log.error("Download from %s failed. Site possibly down.")
+            log.error("Download from %s failed. Site possibly down." % download_link)
             return False
-        for block in response.iter_content(1024):
-            f.write(block)
-    return True
+        try:
+            if not response.ok:
+                if has_gymail:
+                    send_mail(event="error", subject=os.path.basename(__file__),
+                            message="Download from %s failed. Site possibly down." % download_link)
+                log.error("Download from %s failed. Site possibly down.")
+                return False
+            response_text = response.text
+            for block in response.iter_content(1024):
+                f.write(block)
+        except:
+            if has_gymail:
+                send_mail(event="error", subject=os.path.basename(__file__),
+                        message="Download from %s failed. Site possibly down." % download_link)
+            log.error("Download from %s failed. Site possibly down." % download_link)
+            return False
+    if response_text:
+        return response_text
+    else:
+        return True
 
 
 def newest_dir(b='.'):
@@ -632,7 +754,28 @@ class ResizeImg():
         fn = os.path.join(dirname, "%s_%s_%s" % (size + (basename,)))
         try:
             im.save(fn)
+            log.info("Saved %s" % fn)
             return fn
         except Exception as e:
+            log.error(format_exception(e))
             log.error("Skipping resize. Traceback: %s" % format_exception(e))
             return None
+
+
+def cosine_similarity(c1, c2):
+    """Return the cosine similarity of two lists of strings."""
+    c1 = Counter(c1)
+    c2 = Counter(c2)
+    terms = set(c1).union(c2)
+    dotprod = sum(c1.get(k, 0) * c2.get(k, 0) for k in terms)
+    magA = math.sqrt(sum(c1.get(k, 0)**2 for k in terms))
+    magB = math.sqrt(sum(c2.get(k, 0)**2 for k in terms))
+    return dotprod / (magA * magB)
+
+
+def compare_permutations(a, b):
+    """Find match between elements of two lists, no matter the permutation."""
+    if any(x for x in itertools.permutations(a) if x in itertools.permutations(b)):
+        return True
+    else:
+        return False

@@ -319,8 +319,6 @@ def mkdir_p(dirs):
                 else:
                     log.error("Could not create directory")
                     pass
-        else:
-            log.info("Directory exists already.")
 
 
 def umount(mp, lazy=False, fuser=False):

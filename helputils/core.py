@@ -726,6 +726,12 @@ def validate_ip(s):
 
 
 class ResizeImg():
+    """
+    Usage:
+    
+    ri = ResizeImg(dest="/www/env/covers/")
+    ri.resize_optimize("/www/env/covers2/00.jpg")
+    """
 
     def __init__(self, dest=None, imgdir=None, size=None):
         self.imgdir = imgdir
@@ -754,6 +760,34 @@ class ResizeImg():
             im.save(fn)
             log.info("Saved %s" % fn)
             return fn
+        except Exception as e:
+            log.error(format_exception(e))
+            log.error("Skipping resize. Traceback: %s" % format_exception(e))
+            return None
+
+    def resize_optimize(self, fn, resolution, min_filesize=None):
+        img = Image.open(fn)
+        # optimize=True and quality 75 shrink size decently
+        log.info("Resizing %s to %sx%s" % ((fn,) + resolution))
+        if not self.dest:
+            dirname = os.path.dirname(fn)
+        else:
+            dirname = self.dest
+        basename = os.path.basename(fn)
+        new_fn = os.path.join(dirname, "%s_%s_%s" % (resolution + (basename,)))
+        if min_filesize:
+            filesize = os.path.getsize
+            if filesize < min_filesize:
+                # cp to dest without resizing
+                shutil.copy(fn, new_fn)
+                log.info("Image size %s smaller than min_size %s, copying to %s without "\
+                         "resizing" % (filesize, min_filesize, new_fn))
+                return new_fn
+        try:
+            new_img = img.thumbnail(resolution, Image.ANTIALIAS)
+            img.save(new_fn, optimize=True, quality=75)
+            log.info("Resized to %s" % new_fn)
+            return new_fn
         except Exception as e:
             log.error(format_exception(e))
             log.error("Skipping resize. Traceback: %s" % format_exception(e))

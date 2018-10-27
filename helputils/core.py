@@ -744,7 +744,7 @@ class ResizeImg():
         for x in imgs:
             self.resize(x, self.size)
 
-    def resize(self, x, size):
+    def resize_simple(self, x, size):
         log.info("Resizing %s to %sx%s" % ((x,) + size))
         im = Image.open(x)
         if not self.dest:
@@ -765,7 +765,7 @@ class ResizeImg():
             log.error("Skipping resize. Traceback: %s" % format_exception(e))
             return None
 
-    def resize_optimize(self, fn, resolution, min_filesize=None):
+    def resize(self, fn, resolution, min_filesize=None):
         img = Image.open(fn)
         # optimize=True and quality 75 shrink size decently
         log.info("Resizing %s to %sx%s" % ((fn,) + resolution))

@@ -271,6 +271,7 @@ def listdir_fullpath_not_shadowfile(d, prefix, d2=None):
     E.g. when the prefix is 307_432, then the shadow file of /a/example would be
     /a/307_432_example. If `d2 = b` then the shadowfile would be /b/307_432_example.
     """
+    # if d2 not specified we just use d for the shadowfile dirname
     d3 = d2 if d2 else d
     return [
         os.path.join(d, f) for f in os.listdir(d) if not os.path.isfile(os.path.join(d3, "%s_%s" % (prefix, f)))
@@ -766,6 +767,7 @@ class ResizeImg():
             return None
 
     def resize(self, fn, resolution, min_filesize=None):
+        """ Resize image to given resolution and convert PNG/GIF format to JPG """
         img = Image.open(fn)
         # optimize=True and quality 75 shrink size decently
         log.info("Resizing %s to %sx%s" % ((fn,) + resolution))
@@ -784,6 +786,11 @@ class ResizeImg():
                          "resizing" % (filesize, min_filesize, new_fn))
                 return new_fn
         try:
+            # Convert png/gif to jpg, because jpg pictures are smaller
+            if img.format.lower() in ["png", "gif"]:
+                img = img.convert("RGB")
+                # replace .png/.PNG with .jpg
+                new_fn = os.path.splitext(new_fn)[0] + ".jpg"
             new_img = img.thumbnail(resolution, Image.ANTIALIAS)
             img.save(new_fn, optimize=True, quality=75)
             log.info("Resized to %s" % new_fn)

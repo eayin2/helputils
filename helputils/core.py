@@ -188,7 +188,16 @@ def islocal(hn1):
         return False
 
 
-def rsync(src, dst, exclude=list(), tor=False, rsync_args=None, strict=True, ssh_key=None, port=None):
+def rsync(
+        src,
+        dst,
+        exclude=list(),
+        preserve_permission=True,
+        tor=False,
+        rsync_args=None,
+        strict=True,
+        ssh_key=None,
+        port=None):
     """Rsync wrapper with exclude and remote_host.
 
     If you need a remote host simply write e.g. as src `phserver01:/root/some_dir/`. Doesn't support keys with
@@ -197,8 +206,10 @@ def rsync(src, dst, exclude=list(), tor=False, rsync_args=None, strict=True, ssh
     src = os.path.normpath(src)
     src = src + "/"
     torsocks = ["torsocks"] if tor else []
-    if not rsync_args:
+    if not rsync_args and preserve_permission:
         rsync_args = ["-avHAXx"]
+    elif not rsync_args and not preserve_permission:
+        rsync_args = ["-rlvXx"]
     ssh_args = list()
     if not strict:
         ssh_args.append("-o StrictHostKeyChecking=no")
